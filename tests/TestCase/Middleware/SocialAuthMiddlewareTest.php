@@ -12,9 +12,11 @@ use Cake\Http\Exception\MethodNotAllowedException;
 use Cake\Http\Response;
 use Cake\Http\ServerRequest;
 use Cake\Http\ServerRequestFactory;
+use Cake\ORM\Entity;
 use Cake\TestSuite\TestCase;
 use Psr\Http\Server\RequestHandlerInterface;
 use SocialConnect\Common\Entity\User;
+use SocialConnect\OpenIDConnect\AccessToken;
 use SocialConnect\Provider\AccessTokenInterface;
 use SocialConnect\Provider\Session\Dummy;
 use TestApp\Http\TestRequestHandler;
@@ -70,7 +72,7 @@ class SocialAuthMiddlewareTest extends TestCase
                         ],
                         'fields' => [
                             'email',
-                            // To get a full list of all posible values, refer to
+                            // To get a full list of all possible values, refer to
                             // https://developers.facebook.com/docs/graph-api/reference/user
                         ],
                     ],
@@ -96,14 +98,52 @@ class SocialAuthMiddlewareTest extends TestCase
             'provider' => 'facebook',
         ]);
 
-        $class = MethodNotAllowedException::class;
-        if (!class_exists($class)) {
-            $class = 'Cake\Network\Exception\MethodNotAllowedException';
-        }
-        $this->expectException($class);
+        $this->expectException(MethodNotAllowedException::class);
 
         $middleware = new SocialAuthMiddleware();
         $middleware->process($request, $this->handler);
+    }
+
+    public function testLoginWithUserId(): void
+    {
+        $request = ServerRequestFactory::fromGlobals([
+            'REQUEST_URI' => '/social-auth/login/facebook',
+            'REQUEST_METHOD' => 'POST',
+        ]);
+        $request = $request->withAttribute('params', [
+            'plugin' => 'ADmad/SocialAuth',
+            'controller' => 'Auth',
+            'action' => 'callback',
+            'provider' => 'facebook',
+        ]);
+
+        $middleware = $this->getMockBuilder(SocialAuthMiddleware::class)->onlyMethods([
+            '_getSocialIdentity',
+            '_getUserEntity',
+            ])->setConstructorArgs([
+                [
+                    'serviceConfig' => [
+                        'provider' => [],
+                    ],
+                    'userId' => true,
+                ],
+            ])->getMock();
+        $identity = new User();
+        $identity->id = '123456';
+        $identity->username = 'username';
+        $result = ['identity' => $identity, 'access_token' => new AccessToken(['access_token' => '123', 'id_token' => '1'])];
+        $middleware->expects($this->once())->method('_getSocialIdentity')->willReturn($result);
+
+        $entity = new Entity();
+        $entity->id = 1;
+        $entity->username = 'username';
+        $middleware->expects($this->once())->method('_getUserEntity')->willReturn($entity);
+
+        $response = $middleware->process($request, $this->handler);
+        $this->assertEquals(302, $response->getStatusCode());
+        $this->assertNotEmpty($response->getHeaderLine('Location'));
+
+        $this->assertSame(1, $this->request->getSession()->read('Auth'));
     }
 
     /**
